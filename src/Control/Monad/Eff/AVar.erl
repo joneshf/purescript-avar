@@ -7,8 +7,10 @@
     end.
 
 '_putVar'() ->
-    fun(_Util, _Value, _AVar, _CB) ->
-        '_putVar'
+    fun(Util, Value, AVar, CB) ->
+        fun() ->
+            rpc(AVar, {put, Util, Value, CB})
+        end
     end.
 
 '_readVar'() ->
@@ -22,8 +24,10 @@
     end.
 
 '_takeVar'() ->
-    fun(_Util, _AVar, _CB) ->
-        '_takeVar'
+    fun(Util, AVar, CB) ->
+        fun() ->
+            rpc(AVar, {take, Util, CB})
+        end
     end.
 
 '_tryPutVar'() ->
@@ -61,6 +65,12 @@ makeVar(Value) ->
 
 empty() ->
     receive
+        {From, {put, #{ right := Right }, Value, CB}} ->
+            (CB(Right(Value)))(),
+            Canceller = fun() -> unit end,
+            From ! {self(), Canceller},
+            filled(Value);
+
         {From, {tryPut, _Util, Value}} ->
             From ! {self(), true},
             filled(Value);
@@ -80,6 +90,12 @@ empty() ->
 
 filled(Value) ->
     receive
+        {From, {take, #{ right := Right }, CB}} ->
+            (CB(Right(Value)))(),
+            Canceller = fun() -> unit end,
+            From ! {self(), Canceller},
+            empty();
+
         {From, {tryPut, _Util, _Value}} ->
             From ! {self(), false},
             filled(Value);

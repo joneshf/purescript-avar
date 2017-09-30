@@ -199,7 +199,7 @@ main = do
   test_tryPut_empty
   test_tryTake_full
   test_tryTake_empty
-  -- test_put_take
+  test_put_take
   -- test_take_put
   -- test_take_read_put
   -- test_read_put_take
