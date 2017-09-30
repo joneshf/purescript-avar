@@ -53,64 +53,90 @@
 
 makeEmptyVar() ->
     fun() ->
-        spawn(fun() -> empty() end)
+        spawn(fun() -> empty(queue:new(), queue:new()) end)
     end.
 
 makeVar(Value) ->
     fun() ->
-        spawn(fun() -> filled(Value) end)
+        spawn(fun() -> filled(queue:new(), Value) end)
     end.
 
 %% AVar states
 
-empty() ->
+empty(Reads, Takes) ->
     receive
         {From, {put, #{ right := Right }, Value, CB}} ->
-            (CB(Right(Value)))(),
-            Canceller = fun() -> unit end,
-            From ! {self(), Canceller},
-            filled(Value);
+            ReadCBs = queue:to_list(Reads),
+            lists:foreach(fun(ReadCB) -> (ReadCB(Right(Value)))() end, ReadCBs),
+            case queue:out(Takes) of
+                {empty, _} ->
+                    (CB(Right(Value)))(),
+                    Canceller = fun() -> self() ! cancel, unit end,
+                    From ! {self(), Canceller},
+                    filled(queue:new(), Value);
+
+                {{value, OldCB}, Tail} ->
+                    (OldCB(Right(Value)))(),
+                    (CB(Right(unit)))(),
+                    Canceller = fun() -> self() ! cancel, unit end,
+                    From ! {self(), Canceller},
+                    empty(queue:new(), queue:in(CB, Tail))
+            end;
+
+        {From, {take, _Util, CB}} ->
+            From ! {self(), fun() -> self() ! cancel, unit end},
+            empty(Reads, queue:in(CB, Takes));
 
         {From, {tryPut, _Util, Value}} ->
             From ! {self(), true},
-            filled(Value);
+            filled(queue:new(), Value);
 
         {From, {tryRead, #{ nothing := Nothing }}} ->
             From ! {self(), Nothing},
-            empty();
+            empty(Reads, Takes);
 
         {From, {tryTake, #{ nothing := Nothing }}} ->
             From ! {self(), Nothing},
-            empty();
+            empty(Reads, Takes);
 
         Any ->
             io:format("[empty] Received: ~p~n", [Any]),
-            empty()
+            empty(Reads, Takes)
     end.
 
-filled(Value) ->
+filled(Puts, Value) ->
     receive
         {From, {take, #{ right := Right }, CB}} ->
-            (CB(Right(Value)))(),
-            Canceller = fun() -> unit end,
-            From ! {self(), Canceller},
-            empty();
+            case queue:out(Puts) of
+                {empty, _} ->
+                    (CB(Right(Value)))(),
+                    Canceller = fun() -> self() ! cancel, unit end,
+                    From ! {self(), Canceller},
+                    empty(queue:new(), queue:new());
+
+                {{value, {OldCB, NewValue}}, Tail} ->
+                    (OldCB(Right(unit)))(),
+                    (CB(Right(Value)))(),
+                    Canceller = fun() -> self() ! cancel, unit end,
+                    From ! {self(), Canceller},
+                    filled(Tail, NewValue)
+            end;
 
         {From, {tryPut, _Util, _Value}} ->
             From ! {self(), false},
-            filled(Value);
+            filled(Puts, Value);
 
         {From, {tryRead, #{ just := Just }}} ->
             From ! {self(), Just(Value)},
-            filled(Value);
+            filled(Puts, Value);
 
         {From, {tryTake, #{ just := Just }}} ->
             From ! {self(), Just(Value)},
-            empty();
+            empty(queue:new(), queue:new());
 
         Any ->
             io:format("[filled] Received: ~p~n", [Any]),
-            filled(Value)
+            filled(Puts, Value)
     end.
 
 %% RPC framework
