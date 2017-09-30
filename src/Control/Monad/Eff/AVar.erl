@@ -14,8 +14,10 @@
     end.
 
 '_readVar'() ->
-    fun(_Util, _AVar, _CB) ->
-        '_readVar'
+    fun(Util, AVar, CB) ->
+        fun() ->
+            rpc(AVar, {read, Util, CB})
+        end
     end.
 
 '_status'() ->
@@ -82,6 +84,11 @@ empty(Reads, Takes) ->
                     From ! {self(), Canceller},
                     empty(queue:new(), queue:in(CB, Tail))
             end;
+
+        {From, {read, _Util, CB}} ->
+            Canceller = fun() -> self() ! cancel, unit end,
+            From ! {self(), Canceller},
+            empty(queue:in(CB, Reads), Takes);
 
         {From, {take, _Util, CB}} ->
             From ! {self(), fun() -> self() ! cancel, unit end},
