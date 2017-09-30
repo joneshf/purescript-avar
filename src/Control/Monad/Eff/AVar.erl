@@ -41,8 +41,10 @@
     end.
 
 '_tryTakeVar'() ->
-    fun(_Util, _AVar) ->
-        '_tryTakeVar'
+    fun(Util, AVar) ->
+        fun() ->
+            rpc(AVar, {tryTake, Util})
+        end
     end.
 
 makeEmptyVar() ->
@@ -67,6 +69,10 @@ empty() ->
             From ! {self(), Nothing},
             empty();
 
+        {From, {tryTake, #{ nothing := Nothing }}} ->
+            From ! {self(), Nothing},
+            empty();
+
         Any ->
             io:format("[empty] Received: ~p~n", [Any]),
             empty()
@@ -81,6 +87,10 @@ filled(Value) ->
         {From, {tryRead, #{ just := Just }}} ->
             From ! {self(), Just(Value)},
             filled(Value);
+
+        {From, {tryTake, #{ just := Just }}} ->
+            From ! {self(), Just(Value)},
+            empty();
 
         Any ->
             io:format("[filled] Received: ~p~n", [Any]),
