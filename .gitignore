@@ -8,3 +8,8 @@ node_modules
 output
 
 .psc-ide-port
+
+# purerl
+.psc-package
+ebin
+erl_crash.dump
