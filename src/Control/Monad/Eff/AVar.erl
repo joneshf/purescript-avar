@@ -32,8 +32,10 @@
     end.
 
 '_tryReadVar'() ->
-    fun(_Util, _AVar) ->
-        '_tryReadVar'
+    fun(Util, AVar) ->
+        fun() ->
+            rpc(AVar, {tryRead, Util})
+        end
     end.
 
 '_tryTakeVar'() ->
@@ -46,20 +48,25 @@ makeEmptyVar() ->
         makeEmptyVar
     end.
 
-makeVar(_Value) ->
+makeVar(Value) ->
     fun() ->
-        makeVar
+        spawn(fun() -> filled(Value) end)
     end.
 
-start() ->
-    spawn(fun() -> loop([]) end).
+%% AVar states
 
-loop(X) ->
+filled(Value) ->
     receive
+        {From, {tryRead, #{ just := Just }}} ->
+            From ! {self(), Just(Value)},
+            filled(Value);
+
         Any ->
-            io:format("Received:~p~n", [Any]),
-            loop(X)
+            io:format("[filled] Received: ~p~n", [Any]),
+            filled(Value)
     end.
+
+%% RPC framework
 
 rpc(Pid, Request) ->
     Pid ! {self(), Request},

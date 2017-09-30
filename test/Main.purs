@@ -193,8 +193,7 @@ test_cancel = test "cancel" do
 
 main ∷ TestEff Unit
 main = do
-  pure unit
-  -- test_tryRead_full
+  test_tryRead_full
   -- test_tryRead_empty
   -- test_tryPut_full
   -- test_tryPut_empty
