@@ -45,7 +45,7 @@
 
 makeEmptyVar() ->
     fun() ->
-        makeEmptyVar
+        spawn(fun() -> empty() end)
     end.
 
 makeVar(Value) ->
@@ -54,6 +54,17 @@ makeVar(Value) ->
     end.
 
 %% AVar states
+
+empty() ->
+    receive
+        {From, {tryRead, #{ nothing := Nothing }}} ->
+            From ! {self(), Nothing},
+            empty();
+
+        Any ->
+            io:format("[empty] Received: ~p~n", [Any]),
+            empty()
+    end.
 
 filled(Value) ->
     receive
