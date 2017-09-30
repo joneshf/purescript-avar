@@ -27,8 +27,10 @@
     end.
 
 '_tryPutVar'() ->
-    fun(_Util, _Value, _AVar) ->
-        '_tryPutVar'
+    fun(Util, Value, AVar) ->
+        fun() ->
+            rpc(AVar, {tryPut, Util, Value})
+        end
     end.
 
 '_tryReadVar'() ->
@@ -68,6 +70,10 @@ empty() ->
 
 filled(Value) ->
     receive
+        {From, {tryPut, _Util, _Value}} ->
+            From ! {self(), false},
+            filled(Value);
+
         {From, {tryRead, #{ just := Just }}} ->
             From ! {self(), Just(Value)},
             filled(Value);
