@@ -59,6 +59,10 @@ makeVar(Value) ->
 
 empty() ->
     receive
+        {From, {tryPut, _Util, Value}} ->
+            From ! {self(), true},
+            filled(Value);
+
         {From, {tryRead, #{ nothing := Nothing }}} ->
             From ! {self(), Nothing},
             empty();
