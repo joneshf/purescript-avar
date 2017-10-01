@@ -152,15 +152,13 @@ handle_event(Event = {call, From},
         {empty, Reads} ->
             case queue:out(Takes) of
                 {{value, {_UI, Take}}, NewTakes} ->
-                    Canceller = fun() -> unit end,
                     (Take(Right(Value)))(),
                     (CB(Right(unit)))(),
                     NewData = maps:put(takes, NewTakes, Data),
-                    {keep_state, NewData, {reply, From, Canceller}};
+                    {keep_state, NewData, {reply, From, unit_canceller()}};
                 {empty, Takes} ->
-                    Canceller = fun() -> unit end,
                     (CB(Right(unit)))(),
-                    {next_state, {filled, Value}, filled_queues(), {reply, From, Canceller}}
+                    {next_state, {filled, Value}, filled_queues(), {reply, From, unit_canceller()}}
             end
     end;
 handle_event({call, From},
@@ -168,9 +166,7 @@ handle_event({call, From},
              {filled, _Value},
              #{ puts := Puts }
             ) ->
-    Self = self(),
-    UniqCB = {erlang:unique_integer(), NewValue, CB},
-    Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
+    {UniqCB, Canceller} = unique_canceller(NewValue, CB),
     NewData = #{ puts => queue:in(UniqCB, Puts) },
     {keep_state, NewData, {reply, From, Canceller}};
 handle_event({call, From},
@@ -179,13 +175,10 @@ handle_event({call, From},
              _Data
             ) ->
     (CB(Left(Error)))(),
-    Canceller = fun() -> unit end,
-    {keep_state_and_data, {reply, From, Canceller}};
+    {keep_state_and_data, {reply, From, unit_canceller()}};
 
 handle_event({call, From}, {read, _Util, CB}, empty, Data = #{ reads := Reads }) ->
-    Self = self(),
-    UniqCB = {erlang:unique_integer(), CB},
-    Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
+    {UniqCB, Canceller} = unique_canceller(CB),
     NewData = maps:put(reads, queue:in(UniqCB, Reads), Data),
     {keep_state, NewData, {reply, From, Canceller}};
 handle_event({call, From},
@@ -197,17 +190,14 @@ handle_event({call, From},
     case queue:out(Puts) of
         {{value, {_UI, NewValue, Put}}, NewPuts} ->
             (Put(Right(NewValue)))(),
-            Canceller = fun() -> unit end,
             NewData = #{ puts => NewPuts },
-            {next_state, {filled, NewValue}, NewData, {reply, From, Canceller}};
+            {next_state, {filled, NewValue}, NewData, {reply, From, unit_canceller()}};
         {empty, Puts} ->
-            Canceller = fun() -> unit end,
-            {next_state, empty, empty_queues(), {reply, From, Canceller}}
+            {next_state, empty, empty_queues(), {reply, From, unit_canceller()}}
     end;
 handle_event({call, From}, {read, #{ left := Left }, CB}, {killed, Error}, _Data) ->
     (CB(Left(Error)))(),
-    Canceller = fun() -> unit end,
-    {keep_state_and_data, {reply, From, Canceller}};
+    {keep_state_and_data, {reply, From, unit_canceller()}};
 
 handle_event({call, From}, {status, #{ empty := Empty }}, empty, _Data) ->
     {keep_state_and_data, {reply, From, Empty}};
@@ -217,19 +207,15 @@ handle_event({call, From}, {status, #{ killed := Killed }}, {killed, Error}, _Da
     {keep_state_and_data, {reply, From, Killed(Error)}};
 
 handle_event({call, From}, {take, _Util, CB}, empty, Data = #{ takes := Takes }) ->
-    Self = self(),
-    UniqCB = {erlang:unique_integer(), CB},
-    Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
+    {UniqCB, Canceller} = unique_canceller(CB),
     NewData = maps:put(takes, queue:in(UniqCB, Takes), Data),
     {keep_state, NewData, {reply, From, Canceller}};
 handle_event({call, From}, {take, #{ right := Right }, CB}, {filled, Value}, _Data) ->
-    Canceller = fun() -> unit end,
     (CB(Right(Value)))(),
-    {next_state, empty, empty_queues(), {reply, From, Canceller}};
+    {next_state, empty, empty_queues(), {reply, From, unit_canceller()}};
 handle_event({call, From}, {take, #{ left := Left }, CB}, {killed, Error}, _Data) ->
-    Canceller = fun() -> unit end,
     (CB(Left(Error)))(),
-    {keep_state_and_data, {reply, From, Canceller}};
+    {keep_state_and_data, {reply, From, unit_canceller()}};
 
 handle_event(Event = {call, From},
              Content = {tryPut, #{ right := Right }, Value},
@@ -280,3 +266,19 @@ handle_event({call, From},
     end;
 handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, {error, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, Nothing}}.
+
+%% Cancellers
+
+unique_canceller(CB) ->
+    Self = self(),
+    UniqCB = {erlang:unique_integer(), CB},
+    Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
+    {UniqCB, Canceller}.
+
+unique_canceller(Value, CB) ->
+    Self = self(),
+    UniqCB = {erlang:unique_integer(), Value, CB},
+    Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
+    {UniqCB, Canceller}.
+
+unit_canceller() -> fun() -> unit end.
