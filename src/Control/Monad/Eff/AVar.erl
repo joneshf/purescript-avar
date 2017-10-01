@@ -213,12 +213,8 @@ handle_event({call, From}, {tryPut, _Util, _NewValue}, {filled, _Value}, _Data) 
 handle_event({call, From}, {tryPut, _Util, _NewValue}, {killed, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, false}};
 
-handle_event({call, From}, {tryRead, #{ nothing := Nothing }}, empty, _Data) ->
-    {keep_state_and_data, {reply, From, Nothing}};
-handle_event({call, From}, {tryRead, #{ just := Just }}, {filled, Value}, _Data) ->
-    {keep_state_and_data, {reply, From, Just(Value)}};
-handle_event({call, From}, {tryRead, #{ nothing := Nothing }}, {killed, _Error}, _Data) ->
-    {keep_state_and_data, {reply, From, Nothing}};
+handle_event({call, From}, {tryRead, Util}, State, _Data) ->
+    {keep_state_and_data, {reply, From, handle_try_read(Util, State)}};
 
 handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, empty, _Data) ->
     {keep_state_and_data, {reply, From, Nothing}};
@@ -241,6 +237,10 @@ handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, {error, _Error}, 
 handle_status(#{ empty := Empty }, empty) -> Empty;
 handle_status(#{ filled := Filled }, {filled, Value}) -> Filled(Value);
 handle_status(#{ killed := Killed }, {killed, Error}) -> Killed(Error).
+
+handle_try_read(#{ nothing := Nothing }, empty) -> Nothing;
+handle_try_read(#{ just := Just }, {filled, Value}) -> Just(Value);
+handle_try_read(#{ nothing := Nothing }, {killed, _Error}) -> Nothing.
 
 %% Cancellers
 
