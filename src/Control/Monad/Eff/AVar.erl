@@ -103,63 +103,43 @@ handle_event({call, From},
 handle_event({call, From}, {cancel, _}, {error, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
 
-handle_event(Event = {call, From},
-             Content = {kill, #{ left := Left }, Error},
+handle_event({call, From},
+             {kill, #{ left := Left }, Error},
              empty,
-             Data = #{ reads := Reads, takes := Takes }
+             #{ reads := Reads, takes := Takes }
             ) ->
-    case queue:out(Reads) of
-        {{value, {_UID, Read}}, NewReads} ->
-            (Read(Left(Error)))(),
-            NewData = maps:put(reads, NewReads, Data),
-            {repeat_state, NewData, {next_event, Event, Content}};
-        {empty, Reads} ->
-            case queue:out(Takes) of
-                {{value, {_UID, Take}}, NewTakes} ->
-                    (Take(Left(Error)))(),
-                    NewData = maps:put(takes, NewTakes, Data),
-                    {repeat_state, NewData, {next_event, Event, Content}};
-                {empty, Takes} ->
-                    {next_state, {killed, Error}, data, {reply, From, unit}}
-            end
-    end;
-handle_event(Event = {call, From},
-             Content = {kill, #{ left := Left }, Error},
+    ReadCBs = queue:to_list(Reads),
+    lists:foreach(fun({_UID, Read}) -> (Read(Left(Error)))() end, ReadCBs),
+    TakeCBs = queue:to_list(Takes),
+    lists:foreach(fun({_UID, Take}) -> (Take(Left(Error)))() end, TakeCBs),
+    {next_state, {killed, Error}, data, {reply, From, unit}};
+handle_event({call, From},
+             {kill, #{ left := Left }, Error},
              {filled, _Value},
              #{ puts := Puts }
             ) ->
-    case queue:out(Puts) of
-        {{value, {_UID, _, Put}}, NewPuts} ->
-            (Put(Left(Error)))(),
-            NewData = #{ puts => NewPuts },
-            {repeat_state, NewData, {next_event, Event, Content}};
-        {empty, Puts} ->
-            {next_state, {killed, Error}, data, {reply, From, unit}}
-    end;
+    PutCBs = queue:to_list(Puts),
+    lists:foreach(fun({_UID, _, Put}) -> (Put(Left(Error)))() end, PutCBs),
+    {next_state, {killed, Error}, data, {reply, From, unit}};
 handle_event({call, From}, {kill, _Util, _NewError}, {killed, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
 
-handle_event(Event = {call, From},
-             Content = {put, #{ right := Right }, Value, CB},
+handle_event({call, From},
+             {put, #{ right := Right }, Value, CB},
              empty,
              Data = #{ reads := Reads, takes := Takes }
             ) ->
-    case queue:out(Reads) of
-        {{value, {_UID, Read}}, NewReads} ->
-            (Read(Right(Value)))(),
-            NewData = maps:put(reads, NewReads, Data),
-            {repeat_state, NewData, {next_event, Event, Content}};
-        {empty, Reads} ->
-            case queue:out(Takes) of
-                {{value, {_UID, Take}}, NewTakes} ->
-                    (Take(Right(Value)))(),
-                    (CB(Right(unit)))(),
-                    NewData = maps:put(takes, NewTakes, Data),
-                    {keep_state, NewData, {reply, From, unit_canceller()}};
-                {empty, Takes} ->
-                    (CB(Right(unit)))(),
-                    {next_state, {filled, Value}, filled_queues(), {reply, From, unit_canceller()}}
-            end
+    ReadCBs = queue:to_list(Reads),
+    lists:foreach(fun({_UID, Read}) -> (Read(Right(Value)))() end, ReadCBs),
+    case queue:out(Takes) of
+        {{value, {_UID, Take}}, NewTakes} ->
+            (Take(Right(Value)))(),
+            (CB(Right(unit)))(),
+            NewData = maps:put(takes, NewTakes, Data),
+            {keep_state, NewData, {reply, From, unit_canceller()}};
+        {empty, Takes} ->
+            (CB(Right(unit)))(),
+            {next_state, {filled, Value}, filled_queues(), {reply, From, unit_canceller()}}
     end;
 handle_event({call, From},
              {put, _Util, NewValue, CB},
@@ -217,25 +197,20 @@ handle_event({call, From}, {take, #{ left := Left }, CB}, {killed, Error}, _Data
     (CB(Left(Error)))(),
     {keep_state_and_data, {reply, From, unit_canceller()}};
 
-handle_event(Event = {call, From},
-             Content = {tryPut, #{ right := Right }, Value},
+handle_event({call, From},
+             {tryPut, #{ right := Right }, Value},
              empty,
              #{ reads := Reads, takes := Takes }
             ) ->
-    case queue:out(Reads) of
-        {{value, {_UID, Read}}, NewReads} ->
-            (Read(Right(Value)))(),
-            NewData = #{ reads => NewReads, takes => Takes },
-            {repeat_state, NewData, {next_event, Event, Content}};
-        {empty, Reads} ->
-            case queue:out(Takes) of
-                {{value, {_UID, Take}}, NewTakes} ->
-                    (Take(Right(Value)))(),
-                    NewData = #{ reads => Reads, takes => NewTakes},
-                    {keep_state, NewData, {reply, From, true}};
-                {empty, Takes} ->
-                    {next_state, {filled, Value}, filled_queues(), {reply, From, true}}
-            end
+    ReadCBs = queue:to_list(Reads),
+    lists:foreach(fun({_UID, Read}) -> (Read(Right(Value)))() end, ReadCBs),
+    case queue:out(Takes) of
+        {{value, {_UID, Take}}, NewTakes} ->
+            (Take(Right(Value)))(),
+            NewData = #{ reads => Reads, takes => NewTakes},
+            {keep_state, NewData, {reply, From, true}};
+        {empty, Takes} ->
+            {next_state, {filled, Value}, filled_queues(), {reply, From, true}}
     end;
 handle_event({call, From}, {tryPut, _Util, _NewValue}, {filled, _Value}, _Data) ->
     {keep_state_and_data, {reply, From, false}};
