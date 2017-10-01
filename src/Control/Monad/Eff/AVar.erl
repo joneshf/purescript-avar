@@ -79,10 +79,6 @@ callback_mode() -> handle_event_function.
 init(empty) -> {ok, empty, empty_queues()};
 init({filled, Value}) -> {ok, {filled, Value}, filled_queues()}.
 
-empty_queues() -> #{ reads => queue:new(), takes => queue:new() }.
-
-filled_queues() -> #{ puts => queue:new() }.
-
 %% gen_statem callbacks
 
 handle_event({call, From},
@@ -247,3 +243,9 @@ unique_canceller(CB) ->
     {UniqCB, Canceller}.
 
 unit_canceller() -> fun() -> unit end.
+
+%% Helpers
+
+empty_queues() -> #{ reads => queue:new(), takes => queue:new() }.
+
+filled_queues() -> #{ puts => queue:new() }.
