@@ -208,16 +208,12 @@ handle_event({call, From},
         {empty, Takes} ->
             {next_state, {filled, Value}, filled_queues(), {reply, From, true}}
     end;
-handle_event({call, From}, {tryPut, _Util, _NewValue}, {filled, _Value}, _Data) ->
-    {keep_state_and_data, {reply, From, false}};
-handle_event({call, From}, {tryPut, _Util, _NewValue}, {killed, _Error}, _Data) ->
+handle_event({call, From}, {tryPut, _Util, _NewValue}, _State, _Data) ->
     {keep_state_and_data, {reply, From, false}};
 
 handle_event({call, From}, {tryRead, Util}, State, _Data) ->
     {keep_state_and_data, {reply, From, handle_try_read(Util, State)}};
 
-handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, empty, _Data) ->
-    {keep_state_and_data, {reply, From, Nothing}};
 handle_event({call, From},
              {tryTake, #{ just := Just, right := Right }},
              {filled, Value},
@@ -231,7 +227,7 @@ handle_event({call, From},
         {empty, Puts} ->
             {next_state, empty, empty_queues(), {reply, From, Just(Value)}}
     end;
-handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, {error, _Error}, _Data) ->
+handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, _State, _Data) ->
     {keep_state_and_data, {reply, From, Nothing}}.
 
 handle_status(#{ empty := Empty }, empty) -> Empty;
