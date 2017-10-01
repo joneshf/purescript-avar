@@ -94,11 +94,11 @@ handle_event({call, From},
     NewTakes = queue:filter(fun({TakeUID, _}) -> TakeUID =/= UID end, Takes),
     {keep_state, #{ reads => NewReads, takes => NewTakes}, {reply, From, unit}};
 handle_event({call, From},
-             {cancel, {UID, _NewValue, _CB}},
+             {cancel, {UID, {_NewValue, _CB}}},
              {filled, _Value},
              #{ puts := Puts }
             ) ->
-    NewPuts = queue:filter(fun({PutUID, _, _}) -> PutUID =/= UID end, Puts),
+    NewPuts = queue:filter(fun({PutUID, {_, _}}) -> PutUID =/= UID end, Puts),
     {keep_state, #{ puts => NewPuts }, {reply, From, unit}};
 handle_event({call, From}, {cancel, _}, {error, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
@@ -119,7 +119,7 @@ handle_event({call, From},
              #{ puts := Puts }
             ) ->
     PutCBs = queue:to_list(Puts),
-    lists:foreach(fun({_UID, _, Put}) -> (Put(Left(Error)))() end, PutCBs),
+    lists:foreach(fun({_UID, {_, Put}}) -> (Put(Left(Error)))() end, PutCBs),
     {next_state, {killed, Error}, data, {reply, From, unit}};
 handle_event({call, From}, {kill, _Util, _NewError}, {killed, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
@@ -146,7 +146,7 @@ handle_event({call, From},
              {filled, _Value},
              #{ puts := Puts }
             ) ->
-    {UniqCB, Canceller} = unique_canceller(NewValue, CB),
+    {UniqCB, Canceller} = unique_canceller({NewValue, CB}),
     NewData = #{ puts => queue:in(UniqCB, Puts) },
     {keep_state, NewData, {reply, From, Canceller}};
 handle_event({call, From},
@@ -168,7 +168,7 @@ handle_event({call, From},
             ) ->
     (CB(Right(Value)))(),
     case queue:out(Puts) of
-        {{value, {_UID, NewValue, Put}}, NewPuts} ->
+        {{value, {_UID, {NewValue, Put}}}, NewPuts} ->
             (Put(Right(NewValue)))(),
             NewData = #{ puts => NewPuts },
             {next_state, {filled, NewValue}, NewData, {reply, From, unit_canceller()}};
@@ -220,7 +220,7 @@ handle_event({call, From},
              #{ puts := Puts}
             ) ->
     case queue:out(Puts) of
-        {{value, {_UID, NewValue, Put}}, NewPuts} ->
+        {{value, {_UID, {NewValue, Put}}}, NewPuts} ->
             (Put(Right(NewValue)))(),
             NewData = #{ puts => NewPuts },
             {next_state, {filled, NewValue}, NewData, {reply, From, Just(Value)}};
@@ -243,12 +243,6 @@ handle_try_read(#{ nothing := Nothing }, {killed, _Error}) -> Nothing.
 unique_canceller(CB) ->
     Self = self(),
     UniqCB = {erlang:unique_integer(), CB},
-    Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
-    {UniqCB, Canceller}.
-
-unique_canceller(Value, CB) ->
-    Self = self(),
-    UniqCB = {erlang:unique_integer(), Value, CB},
     Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
     {UniqCB, Canceller}.
 
