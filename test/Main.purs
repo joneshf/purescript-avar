@@ -1,11 +1,12 @@
 module Test.Main where
 
 import Prelude
+
 import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.AVar (AVAR, killVar, makeEmptyVar, makeVar, putVar, readVar, takeVar, tryPutVar, tryReadVar, tryTakeVar)
+import Control.Monad.Eff.AVar (AVAR, AVarStatus(Empty, Killed, Filled), killVar, makeEmptyVar, makeVar, putVar, readVar, status, takeVar, tryPutVar, tryReadVar, tryTakeVar)
 import Control.Monad.Eff.Console (CONSOLE, log)
 import Control.Monad.Eff.Exception (error, message)
-import Control.Monad.Eff.Ref (REF, modifyRef, newRef, readRef)
+import Control.Monad.Eff.Ref (REF, Ref, modifyRef, newRef, readRef)
 import Data.Either (Either(..))
 import Data.Foldable (traverse_)
 import Data.Maybe (Maybe(..))
@@ -13,41 +14,71 @@ import Test.Assert (ASSERT, assert')
 
 type TestEff = Eff (avar ∷ AVAR, assert ∷ ASSERT, console ∷ CONSOLE, ref ∷ REF)
 
-test ∷ String → TestEff Boolean → TestEff Unit
-test s k = k >>= \r → assert' s r *> log ("[OK] " <> s)
+assertEqual ∷ ∀ a. Eq a => Show a => { expected ∷ a, actual ∷ a } -> TestEff Unit
+assertEqual {actual, expected} = do
+  unless result $ log message
+  assert' message result
+  where
+  message = "Expected: " <> show expected <> "\nActual:   " <> show actual
+  result = actual == expected
+
+assertEqualRef ∷ ∀ a. Eq a => Show a => a -> Ref a -> TestEff Unit
+assertEqualRef expected ref = do
+  actual <- readRef ref
+  assertEqual { actual, expected }
+
+assertEqualStatus
+  ∷ ∀ a
+  . Show a
+  => { expected ∷ AVarStatus a, actual ∷ AVarStatus a }
+  -> TestEff Unit
+assertEqualStatus { actual, expected } =
+  assertEqual { actual: show actual, expected: show expected }
+
+assertTrue ∷ Boolean -> TestEff Unit
+assertTrue actual = assertEqual { actual, expected: true }
+
+assertFalse ∷ Boolean -> TestEff Unit
+assertFalse actual = assertEqual { actual, expected: false }
+
+test ∷ ∀ a. String → TestEff a → TestEff Unit
+test s k = k *> log ("[OK] " <> s)
 
 test_tryRead_full ∷ TestEff Unit
 test_tryRead_full = test "tryRead/full" do
   var ← makeVar "foo"
   val1 ← tryReadVar var
   val2 ← tryReadVar var
-  pure (val1 == Just "foo" && val2 == Just "foo")
+  assertEqual { actual: val1, expected: Just "foo" }
+  assertEqual { actual: val2, expected: Just "foo" }
 
 test_tryRead_empty ∷ TestEff Unit
 test_tryRead_empty = test "tryRead/empty" do
   var ← makeEmptyVar
   val1 ∷ Maybe Unit ← tryReadVar var
-  pure (val1 == Nothing)
+  assertEqual { actual: val1, expected: Nothing }
 
 test_tryPut_full ∷ TestEff Unit
 test_tryPut_full = test "tryPut/full" do
   var ← makeVar "foo"
   res ← tryPutVar "bar" var
-  pure (not res)
+  assertFalse res
 
 test_tryPut_empty ∷ TestEff Unit
 test_tryPut_empty = test "tryPut/empty" do
   var ← makeEmptyVar
   res ← tryPutVar "foo" var
   val ← tryReadVar var
-  pure (res && val == Just "foo")
+  assertTrue res
+  assertEqual { actual: val, expected: Just "foo" }
 
 test_tryTake_full ∷ TestEff Unit
 test_tryTake_full = test "tryTake/full" do
   var ← makeVar "foo"
   res1 ← tryTakeVar var
   res2 ← tryTakeVar var
-  pure (res1 == Just "foo" && res2 == Nothing)
+  assertEqual { actual: res1, expected: Just "foo" }
+  assertEqual { actual: res2, expected: Nothing }
 
 test_tryTake_empty ∷ TestEff Unit
 test_tryTake_empty = test "tryTake/empty" do
@@ -55,7 +86,9 @@ test_tryTake_empty = test "tryTake/empty" do
   res1 ← tryTakeVar var
   res2 ← tryPutVar "foo" var
   res3 ← tryTakeVar var
-  pure (res1 == Nothing && res2 && res3 == Just "foo")
+  assertEqual { actual: res1, expected: Nothing }
+  assertTrue res2
+  assertEqual { actual: res3, expected: Just "foo" }
 
 test_put_take ∷ TestEff Unit
 test_put_take = test "put/take" do
@@ -65,7 +98,7 @@ test_put_take = test "put/take" do
     modifyRef ref (_ <> "bar")
   _ ← takeVar var $ traverse_ \val →
     modifyRef ref (_ <> val)
-  eq "barfoo" <$> readRef ref
+  assertEqualRef "barfoo" ref
 
 test_put_read_take ∷ TestEff Unit
 test_put_read_take = test "put/read/take" do
@@ -77,7 +110,7 @@ test_put_read_take = test "put/read/take" do
     modifyRef ref (_ <> val <> "baz")
   _ ← takeVar var $ traverse_ \val →
     modifyRef ref (_ <> val)
-  eq "foobazfoobar" <$> readRef ref
+  assertEqualRef "foobazfoobar" ref
 
 test_take_put ∷ TestEff Unit
 test_take_put = test "take/put" do
@@ -87,7 +120,7 @@ test_take_put = test "take/put" do
     modifyRef ref (_ <> val)
   _ ← putVar "foo" var $ traverse_ \_ →
     modifyRef ref (_ <> "bar")
-  eq "foobar" <$> readRef ref
+  assertEqualRef "foobar" ref
 
 test_take_read_put ∷ TestEff Unit
 test_take_read_put = test "take/read/put" do
@@ -99,7 +132,7 @@ test_take_read_put = test "take/read/put" do
     modifyRef ref (_ <> val <> "baz")
   _ ← putVar "foo" var $ traverse_ \_ →
     modifyRef ref (_ <> "bar")
-  eq "foobazfoobar" <$> readRef ref
+  assertEqualRef "foobazfoobar" ref
 
 test_read_put_take ∷ TestEff Unit
 test_read_put_take = test "read/put/take" do
@@ -111,7 +144,7 @@ test_read_put_take = test "read/put/take" do
     modifyRef ref (_ <> "bar")
   _ ← takeVar var $ traverse_ \val → do
     modifyRef ref (_ <> val)
-  eq "foobazbarfoo" <$> readRef ref
+  assertEqualRef "foobazbarfoo" ref
 
 test_read_take_put ∷ TestEff Unit
 test_read_take_put = test "read/take/put" do
@@ -123,7 +156,7 @@ test_read_take_put = test "read/take/put" do
       modifyRef ref (_ <> val')
   _ ← putVar "foo" var $ traverse_ \_ →
     modifyRef ref (_ <> "bar")
-  eq "foobazbarfoo" <$> readRef ref
+  assertEqualRef "foobazbarfoo" ref
 
 test_kill_full ∷ TestEff Unit
 test_kill_full = test "kill/full" do
@@ -135,7 +168,7 @@ test_kill_full = test "kill/full" do
   _ ← readVar var case _ of
     Left err → modifyRef ref (_ <> message err)
     Right _  → modifyRef ref (_ <> "BAD")
-  eq "barDie." <$> readRef ref
+  assertEqualRef "barDie." ref
 
 test_kill_empty ∷ TestEff Unit
 test_kill_empty = test "kill/empty" do
@@ -145,7 +178,7 @@ test_kill_empty = test "kill/empty" do
   _ ← readVar var case _ of
     Left err → modifyRef ref (_ <> message err)
     Right _  → modifyRef ref (_ <> "BAD")
-  eq "Die." <$> readRef ref
+  assertEqualRef "Die." ref
 
 test_kill_pending ∷ TestEff Unit
 test_kill_pending = test "kill/pending" do
@@ -160,7 +193,7 @@ test_kill_pending = test "kill/pending" do
   _ ← readVar var (cb "c")
   _ ← readVar var (cb "d")
   killVar (error "-die.") var
-  eq "c-die.d-die.a-die.b-die." <$> readRef ref
+  assertEqualRef "c-die.d-die.a-die.b-die." ref
 
 test_cancel ∷ TestEff Unit
 test_cancel = test "cancel" do
@@ -189,7 +222,27 @@ test_cancel = test "cancel" do
   c8
   c9
   _  ← tryPutVar "a" v3
-  eq "cdfg" <$> readRef ref
+  assertEqualRef "cdfg" ref
+
+test_status_full ∷ TestEff Unit
+test_status_full = test "status/full" do
+  var ← makeVar "a"
+  s ← status var
+  assertEqualStatus { actual: s, expected: Filled "a" }
+
+test_status_kill ∷ TestEff Unit
+test_status_kill = test "status/kill" do
+  var ← makeVar "a"
+  killVar (error "b") var
+  s ← status var
+  assertEqualStatus { actual: s, expected: Killed (error "b") }
+
+test_status_empty ∷ TestEff Unit
+test_status_empty = test "status/empty" do
+  var ← makeVar "a"
+  _ <- takeVar var \_ -> pure unit
+  s ← status var
+  assertEqualStatus { actual: s, expected: Empty }
 
 main ∷ TestEff Unit
 main = do
@@ -207,4 +260,7 @@ main = do
   test_kill_full
   test_kill_empty
   test_kill_pending
-  -- test_cancel
+  test_cancel
+  test_status_full
+  test_status_kill
+  test_status_empty

@@ -23,6 +23,7 @@ module Control.Monad.Eff.AVar
   ) where
 
 import Prelude
+
 import Control.Monad.Eff (kind Effect, Eff)
 import Control.Monad.Eff.Exception (Error)
 import Data.Either (Either(..))
@@ -41,6 +42,12 @@ data AVarStatus a
   = Killed Error
   | Filled a
   | Empty
+
+instance showAVarStatus :: Show a => Show (AVarStatus a) where
+  show = case _ of
+    Empty -> "Empty"
+    Filled value -> "(Filled " <> show value <> ")"
+    Killed error -> "(Killed " <> show error <> ")"
 
 -- | Creates a fresh AVar.
 foreign import makeEmptyVar ∷ ∀ eff a. AVarEff eff (AVar a)
