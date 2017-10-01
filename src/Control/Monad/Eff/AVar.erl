@@ -86,19 +86,19 @@ filled_queues() -> #{ puts => queue:new() }.
 %% gen_statem callbacks
 
 handle_event({call, From},
-             {cancel, {UI, _CB}},
+             {cancel, {UID, _CB}},
              empty,
              #{ reads := Reads, takes := Takes }
             ) ->
-    NewReads = queue:filter(fun({ReadUI, _}) -> ReadUI =/= UI end, Reads),
-    NewTakes = queue:filter(fun({TakeUI, _}) -> TakeUI =/= UI end, Takes),
+    NewReads = queue:filter(fun({ReadUID, _}) -> ReadUID =/= UID end, Reads),
+    NewTakes = queue:filter(fun({TakeUID, _}) -> TakeUID =/= UID end, Takes),
     {keep_state, #{ reads => NewReads, takes => NewTakes}, {reply, From, unit}};
 handle_event({call, From},
-             {cancel, {UI, _NewValue, _CB}},
+             {cancel, {UID, _NewValue, _CB}},
              {filled, _Value},
              #{ puts := Puts }
             ) ->
-    NewPuts = queue:filter(fun({PutUI, _, _}) -> PutUI =/= UI end, Puts),
+    NewPuts = queue:filter(fun({PutUID, _, _}) -> PutUID =/= UID end, Puts),
     {keep_state, #{ puts => NewPuts }, {reply, From, unit}};
 handle_event({call, From}, {cancel, _}, {error, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
@@ -109,13 +109,13 @@ handle_event(Event = {call, From},
              Data = #{ reads := Reads, takes := Takes }
             ) ->
     case queue:out(Reads) of
-        {{value, {_UI, Read}}, NewReads} ->
+        {{value, {_UID, Read}}, NewReads} ->
             (Read(Left(Error)))(),
             NewData = maps:put(reads, NewReads, Data),
             {repeat_state, NewData, {next_event, Event, Content}};
         {empty, Reads} ->
             case queue:out(Takes) of
-                {{value, {_UI, Take}}, NewTakes} ->
+                {{value, {_UID, Take}}, NewTakes} ->
                     (Take(Left(Error)))(),
                     NewData = maps:put(takes, NewTakes, Data),
                     {repeat_state, NewData, {next_event, Event, Content}};
@@ -129,7 +129,7 @@ handle_event(Event = {call, From},
              #{ puts := Puts }
             ) ->
     case queue:out(Puts) of
-        {{value, {_UI, _, Put}}, NewPuts} ->
+        {{value, {_UID, _, Put}}, NewPuts} ->
             (Put(Left(Error)))(),
             NewData = #{ puts => NewPuts },
             {repeat_state, NewData, {next_event, Event, Content}};
@@ -145,13 +145,13 @@ handle_event(Event = {call, From},
              Data = #{ reads := Reads, takes := Takes }
             ) ->
     case queue:out(Reads) of
-        {{value, {_UI, Read}}, NewReads} ->
+        {{value, {_UID, Read}}, NewReads} ->
             (Read(Right(Value)))(),
             NewData = maps:put(reads, NewReads, Data),
             {repeat_state, NewData, {next_event, Event, Content}};
         {empty, Reads} ->
             case queue:out(Takes) of
-                {{value, {_UI, Take}}, NewTakes} ->
+                {{value, {_UID, Take}}, NewTakes} ->
                     (Take(Right(Value)))(),
                     (CB(Right(unit)))(),
                     NewData = maps:put(takes, NewTakes, Data),
@@ -188,7 +188,7 @@ handle_event({call, From},
             ) ->
     (CB(Right(Value)))(),
     case queue:out(Puts) of
-        {{value, {_UI, NewValue, Put}}, NewPuts} ->
+        {{value, {_UID, NewValue, Put}}, NewPuts} ->
             (Put(Right(NewValue)))(),
             NewData = #{ puts => NewPuts },
             {next_state, {filled, NewValue}, NewData, {reply, From, unit_canceller()}};
@@ -223,13 +223,13 @@ handle_event(Event = {call, From},
              #{ reads := Reads, takes := Takes }
             ) ->
     case queue:out(Reads) of
-        {{value, {_UI, Read}}, NewReads} ->
+        {{value, {_UID, Read}}, NewReads} ->
             (Read(Right(Value)))(),
             NewData = #{ reads => NewReads, takes => Takes },
             {repeat_state, NewData, {next_event, Event, Content}};
         {empty, Reads} ->
             case queue:out(Takes) of
-                {{value, {_UI, Take}}, NewTakes} ->
+                {{value, {_UID, Take}}, NewTakes} ->
                     (Take(Right(Value)))(),
                     NewData = #{ reads => Reads, takes => NewTakes},
                     {keep_state, NewData, {reply, From, true}};
@@ -257,7 +257,7 @@ handle_event({call, From},
              #{ puts := Puts}
             ) ->
     case queue:out(Puts) of
-        {{value, {_UI, NewValue, Put}}, NewPuts} ->
+        {{value, {_UID, NewValue, Put}}, NewPuts} ->
             (Put(Right(NewValue)))(),
             NewData = #{ puts => NewPuts },
             {next_state, {filled, NewValue}, NewData, {reply, From, Just(Value)}};
