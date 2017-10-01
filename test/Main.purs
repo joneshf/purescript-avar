@@ -202,9 +202,9 @@ main = do
   test_put_take
   test_take_put
   test_take_read_put
-  -- test_read_put_take
+  test_read_put_take
   -- test_read_take_put
-  -- test_kill_full
-  -- test_kill_empty
-  -- test_kill_pending
+  test_kill_full
+  test_kill_empty
+  test_kill_pending
   -- test_cancel

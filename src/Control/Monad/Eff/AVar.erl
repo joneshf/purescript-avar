@@ -2,8 +2,10 @@
 -export(['_killVar'/0, '_putVar'/0, '_readVar'/0, '_status'/0, '_takeVar'/0, '_tryPutVar'/0, '_tryReadVar'/0, '_tryTakeVar'/0, makeEmptyVar/0, makeVar/1]).
 
 '_killVar'() ->
-    fun(_Util, _Error, _AVar) ->
-        '_killVar'
+    fun(Util, Error, AVar) ->
+        fun() ->
+            rpc(AVar, {kill, Util, Error})
+        end
     end.
 
 '_putVar'() ->
@@ -67,6 +69,14 @@ makeVar(Value) ->
 
 empty(Reads, Takes) ->
     receive
+        {From, {kill, #{ left := Left }, Error}} ->
+            ReadCBs = queue:to_list(Reads),
+            lists:foreach(fun(ReadCB) -> (ReadCB(Left(Error)))() end, ReadCBs),
+            TakeCBs = queue:to_list(Takes),
+            lists:foreach(fun(TakeCB) -> (TakeCB(Left(Error)))() end, TakeCBs),
+            From ! {self(), unit},
+            killed(Error);
+
         {From, {put, #{ right := Right }, Value, CB}} ->
             ReadCBs = queue:to_list(Reads),
             lists:foreach(fun(ReadCB) -> (ReadCB(Right(Value)))() end, ReadCBs),
@@ -113,6 +123,17 @@ empty(Reads, Takes) ->
 
 filled(Puts, Value) ->
     receive
+        {From, {kill, #{ left := Left }, Error}} ->
+            PutCBs = queue:to_list(Puts),
+            lists:foreach(fun(PutCB) -> (PutCB(Left(Error)))() end, PutCBs),
+            From ! {self(), unit},
+            killed(Error);
+
+        {From, {put, _Util, NewValue, CB}} ->
+            Canceller = fun() -> self() ! cancel, unit end,
+            From ! {self(), Canceller},
+            filled(queue:in({CB, NewValue}, Puts), Value);
+
         {From, {take, #{ right := Right }, CB}} ->
             case queue:out(Puts) of
                 {empty, _} ->
@@ -144,6 +165,19 @@ filled(Puts, Value) ->
         Any ->
             io:format("[filled] Received: ~p~n", [Any]),
             filled(Puts, Value)
+    end.
+
+killed(Error) ->
+    receive
+        {From, {read, #{ left := Left }, CB}} ->
+            (CB(Left(Error)))(),
+            Canceller = fun() -> self() ! cancel, unit end,
+            From ! {self(), Canceller},
+            empty(queue:new(), queue:new());
+
+        Any ->
+            io:format("[killed] Received: ~p~n", [Any]),
+            killed(Error)
     end.
 
 %% RPC framework
