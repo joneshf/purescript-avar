@@ -179,12 +179,8 @@ handle_event({call, From}, {read, #{ left := Left }, CB}, {killed, Error}, _Data
     (CB(Left(Error)))(),
     {keep_state_and_data, {reply, From, unit_canceller()}};
 
-handle_event({call, From}, {status, #{ empty := Empty }}, empty, _Data) ->
-    {keep_state_and_data, {reply, From, Empty}};
-handle_event({call, From}, {status, #{ filled := Filled }}, {filled, Value}, _Data) ->
-    {keep_state_and_data, {reply, From, Filled(Value)}};
-handle_event({call, From}, {status, #{ killed := Killed }}, {killed, Error}, _Data) ->
-    {keep_state_and_data, {reply, From, Killed(Error)}};
+handle_event({call, From}, {status, Util}, State, _Data) ->
+    {keep_state_and_data, {reply, From, handle_status(Util, State)}};
 
 handle_event({call, From}, {take, _Util, CB}, empty, Data = #{ takes := Takes }) ->
     {UniqCB, Canceller} = unique_canceller(CB),
@@ -241,6 +237,10 @@ handle_event({call, From},
     end;
 handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, {error, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, Nothing}}.
+
+handle_status(#{ empty := Empty }, empty) -> Empty;
+handle_status(#{ filled := Filled }, {filled, Value}) -> Filled(Value);
+handle_status(#{ killed := Killed }, {killed, Error}) -> Killed(Error).
 
 %% Cancellers
 
