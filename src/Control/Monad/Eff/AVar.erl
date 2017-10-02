@@ -162,8 +162,22 @@ handle_event({call, From}, {read, _Util, CB}, empty, Data = #{ reads := Reads })
     {UniqCB, Canceller} = unique_canceller(CB),
     NewData = maps:put(reads, queue:in(UniqCB, Reads), Data),
     {keep_state, NewData, {reply, From, Canceller}};
+handle_event({call, From}, {read, #{ right := Right }, CB}, {filled, Value}, _Data) ->
+    (CB(Right(Value)))(),
+    {next_state, empty, empty_queues(), {reply, From, unit_canceller()}};
+handle_event({call, From}, {read, #{ left := Left }, CB}, {killed, Error}, _Data) ->
+    (CB(Left(Error)))(),
+    {keep_state_and_data, {reply, From, unit_canceller()}};
+
+handle_event({call, From}, {status, Util}, State, _Data) ->
+    {keep_state_and_data, {reply, From, handle_status(Util, State)}};
+
+handle_event({call, From}, {take, _Util, CB}, empty, Data = #{ takes := Takes }) ->
+    {UniqCB, Canceller} = unique_canceller(CB),
+    NewData = maps:put(takes, queue:in(UniqCB, Takes), Data),
+    {keep_state, NewData, {reply, From, Canceller}};
 handle_event({call, From},
-             {read, #{ right := Right }, CB},
+             {take, #{ right := Right }, CB},
              {filled, Value},
              #{ puts := Puts }
             ) ->
@@ -176,20 +190,6 @@ handle_event({call, From},
         {empty, Puts} ->
             {next_state, empty, empty_queues(), {reply, From, unit_canceller()}}
     end;
-handle_event({call, From}, {read, #{ left := Left }, CB}, {killed, Error}, _Data) ->
-    (CB(Left(Error)))(),
-    {keep_state_and_data, {reply, From, unit_canceller()}};
-
-handle_event({call, From}, {status, Util}, State, _Data) ->
-    {keep_state_and_data, {reply, From, handle_status(Util, State)}};
-
-handle_event({call, From}, {take, _Util, CB}, empty, Data = #{ takes := Takes }) ->
-    {UniqCB, Canceller} = unique_canceller(CB),
-    NewData = maps:put(takes, queue:in(UniqCB, Takes), Data),
-    {keep_state, NewData, {reply, From, Canceller}};
-handle_event({call, From}, {take, #{ right := Right }, CB}, {filled, Value}, _Data) ->
-    (CB(Right(Value)))(),
-    {next_state, empty, empty_queues(), {reply, From, unit_canceller()}};
 handle_event({call, From}, {take, #{ left := Left }, CB}, {killed, Error}, _Data) ->
     (CB(Left(Error)))(),
     {keep_state_and_data, {reply, From, unit_canceller()}};
@@ -235,9 +235,8 @@ handle_status(#{ empty := Empty }, empty) -> Empty;
 handle_status(#{ filled := Filled }, {filled, Value}) -> Filled(Value);
 handle_status(#{ killed := Killed }, {killed, Error}) -> Killed(Error).
 
-handle_try_read(#{ nothing := Nothing }, empty) -> Nothing;
 handle_try_read(#{ just := Just }, {filled, Value}) -> Just(Value);
-handle_try_read(#{ nothing := Nothing }, {killed, _Error}) -> Nothing.
+handle_try_read(#{ nothing := Nothing }, _State) -> Nothing.
 
 %% Cancellers
 
