@@ -1,6 +1,11 @@
 -module(control_monad_eff_aVar@foreign).
 -behavior(gen_statem).
--export(['_killVar'/0, '_putVar'/0, '_readVar'/0, '_status'/0, '_takeVar'/0, '_tryPutVar'/0, '_tryReadVar'/0, '_tryTakeVar'/0, makeEmptyVar/0, makeVar/1]).
+
+%% PS FFI functions
+-export(['_killVar'/0, '_putVar'/0, '_readVar'/0, '_status'/0, '_takeVar'/0]).
+-export(['_tryPutVar'/0, '_tryReadVar'/0, '_tryTakeVar'/0]).
+-export([makeEmptyVar/0, makeVar/1]).
+
 -export([callback_mode/0, init/1]).
 -export([handle_event/4]).
 
