@@ -131,6 +131,46 @@ handle_event({call, From},
 handle_event({call, From}, {kill, _Util, _NewError}, {killed, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
 
+handle_event({call, From}, {status, Util}, State, _Data) ->
+    {keep_state_and_data, {reply, From, handle_status(Util, State)}};
+
+handle_event({call, From},
+             {tryPut, #{ right := Right }, Value},
+             empty,
+             #{ reads := Reads, takes := Takes }
+            ) ->
+    ReadCBs = queue:to_list(Reads),
+    lists:foreach(fun({_UID, Read}) -> spawn(Read(Right(Value))) end, ReadCBs),
+    case queue:out(Takes) of
+        {{value, {_UID, Take}}, NewTakes} ->
+            spawn(Take(Right(Value))),
+            NewData = #{ reads => Reads, takes => NewTakes},
+            {keep_state, NewData, {reply, From, true}};
+        {empty, Takes} ->
+            {next_state, {filled, Value}, filled_queues(), {reply, From, true}}
+    end;
+handle_event({call, From}, {tryPut, _Util, _NewValue}, _State, _Data) ->
+    {keep_state_and_data, {reply, From, false}};
+
+handle_event({call, From}, {tryRead, Util}, State, _Data) ->
+    {keep_state_and_data, {reply, From, handle_try_read(Util, State)}};
+
+handle_event({call, From},
+             {tryTake, #{ just := Just, right := Right }},
+             {filled, Value},
+             #{ puts := Puts}
+            ) ->
+    case queue:out(Puts) of
+        {{value, {_UID, {NewValue, Put}}}, NewPuts} ->
+            spawn(Put(Right(NewValue))),
+            NewData = #{ puts => NewPuts },
+            {next_state, {filled, NewValue}, NewData, {reply, From, Just(Value)}};
+        {empty, Puts} ->
+            {next_state, empty, empty_queues(), {reply, From, Just(Value)}}
+    end;
+handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, _State, _Data) ->
+    {keep_state_and_data, {reply, From, Nothing}};
+
 handle_event(cast,
              {put, #{ right := Right }, {_PutUID, {Value, CB}}},
              empty,
@@ -169,9 +209,6 @@ handle_event(cast, {read, #{ left := Left }, {_UID, CB}}, {killed, Error}, _Data
     spawn(CB(Left(Error))),
     keep_state_and_data;
 
-handle_event({call, From}, {status, Util}, State, _Data) ->
-    {keep_state_and_data, {reply, From, handle_status(Util, State)}};
-
 handle_event(cast, {take, _Util, CB}, empty, Data = #{ takes := Takes }) ->
     NewData = maps:put(takes, queue:in(CB, Takes), Data),
     {keep_state, NewData};
@@ -191,44 +228,7 @@ handle_event(cast,
     end;
 handle_event(cast, {take, #{ left := Left }, {_TakeUID, CB}}, {killed, Error}, _Data) ->
     spawn(CB(Left(Error))),
-    keep_state_and_data;
-
-handle_event({call, From},
-             {tryPut, #{ right := Right }, Value},
-             empty,
-             #{ reads := Reads, takes := Takes }
-            ) ->
-    ReadCBs = queue:to_list(Reads),
-    lists:foreach(fun({_UID, Read}) -> spawn(Read(Right(Value))) end, ReadCBs),
-    case queue:out(Takes) of
-        {{value, {_UID, Take}}, NewTakes} ->
-            spawn(Take(Right(Value))),
-            NewData = #{ reads => Reads, takes => NewTakes},
-            {keep_state, NewData, {reply, From, true}};
-        {empty, Takes} ->
-            {next_state, {filled, Value}, filled_queues(), {reply, From, true}}
-    end;
-handle_event({call, From}, {tryPut, _Util, _NewValue}, _State, _Data) ->
-    {keep_state_and_data, {reply, From, false}};
-
-handle_event({call, From}, {tryRead, Util}, State, _Data) ->
-    {keep_state_and_data, {reply, From, handle_try_read(Util, State)}};
-
-handle_event({call, From},
-             {tryTake, #{ just := Just, right := Right }},
-             {filled, Value},
-             #{ puts := Puts}
-            ) ->
-    case queue:out(Puts) of
-        {{value, {_UID, {NewValue, Put}}}, NewPuts} ->
-            spawn(Put(Right(NewValue))),
-            NewData = #{ puts => NewPuts },
-            {next_state, {filled, NewValue}, NewData, {reply, From, Just(Value)}};
-        {empty, Puts} ->
-            {next_state, empty, empty_queues(), {reply, From, Just(Value)}}
-    end;
-handle_event({call, From}, {tryTake, #{ nothing := Nothing }}, _State, _Data) ->
-    {keep_state_and_data, {reply, From, Nothing}}.
+    keep_state_and_data.
 
 handle_status(#{ empty := Empty }, empty) -> Empty;
 handle_status(#{ filled := Filled }, {filled, Value}) -> Filled(Value);
