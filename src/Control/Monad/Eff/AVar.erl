@@ -204,7 +204,7 @@ handle_event(cast, {read, _Util, CB}, empty, Data = #{ reads := Reads }) ->
     {keep_state, NewData};
 handle_event(cast, {read, #{ right := Right }, {_UID, CB}}, {filled, Value}, _Data) ->
     spawn(CB(Right(Value))),
-    {next_state, empty, empty_queues()};
+    keep_state_and_data;
 handle_event(cast, {read, #{ left := Left }, {_UID, CB}}, {killed, Error}, _Data) ->
     spawn(CB(Left(Error))),
     keep_state_and_data;
