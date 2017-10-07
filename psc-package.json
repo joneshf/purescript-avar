@@ -1,8 +1,9 @@
 {
     "name": "avar",
-    "set": "purerl-0.11.6-20170930125614",
+    "set": "purerl-0.11.6-20171005183146",
     "source": "https://github.com/joneshf/purescript-package-sets.git",
     "depends": [
+        "now",
         "refs",
         "assert",
         "eff",

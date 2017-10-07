@@ -2,17 +2,21 @@ module Test.Main where
 
 import Prelude
 
-import Control.Monad.Eff (Eff)
+import Control.Monad.Eff (Eff, untilE)
 import Control.Monad.Eff.AVar (AVAR, AVarStatus(Empty, Killed, Filled), killVar, makeEmptyVar, makeVar, putVar, readVar, status, takeVar, tryPutVar, tryReadVar, tryTakeVar)
 import Control.Monad.Eff.Console (CONSOLE, log)
-import Control.Monad.Eff.Exception (error, message)
+import Control.Monad.Eff.Exception (error)
+import Control.Monad.Eff.Now (NOW, now)
 import Control.Monad.Eff.Ref (REF, Ref, modifyRef, newRef, readRef)
+import Data.DateTime.Instant (unInstant)
 import Data.Either (Either(..))
 import Data.Foldable (traverse_)
 import Data.Maybe (Maybe(..))
-import Test.Assert (ASSERT, assert')
+import Data.Newtype (wrap)
+import Test.Assert (ASSERT, assert, assert')
 
-type TestEff = Eff (avar ∷ AVAR, assert ∷ ASSERT, console ∷ CONSOLE, ref ∷ REF)
+type TestEff
+  = Eff (avar ∷ AVAR, assert ∷ ASSERT, console ∷ CONSOLE, now ∷ NOW, ref ∷ REF)
 
 assertEqual ∷ ∀ a. Eq a => Show a => { expected ∷ a, actual ∷ a } -> TestEff Unit
 assertEqual {actual, expected} = do
@@ -40,6 +44,19 @@ assertTrue actual = assertEqual { actual, expected: true }
 
 assertFalse ∷ Boolean -> TestEff Unit
 assertFalse actual = assertEqual { actual, expected: false }
+
+waitForCallbacks ∷ Int -> Ref Int -> TestEff Unit
+waitForCallbacks expected ref = do
+  start <- now
+  let checkCallbacks = (expected == _) <$> readRef ref
+  untilE do
+    actual <- readRef ref
+    current <- now
+    let timedOut = unInstant current - unInstant start > wrap 2000.0
+    when (timedOut && expected /= actual) do
+      log $ "Timed out. " <> show actual <> " of " <> show expected <> " callback(s) fired."
+      assert false
+    pure $ expected == actual
 
 test ∷ ∀ a. String → TestEff a → TestEff Unit
 test s k = k *> log ("[OK] " <> s)
@@ -92,137 +109,137 @@ test_tryTake_empty = test "tryTake/empty" do
 
 test_put_take ∷ TestEff Unit
 test_put_take = test "put/take" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   _ ← putVar "foo" var $ traverse_ \_ →
-    modifyRef ref (_ <> "bar")
+    modifyRef ref (_ + 1)
   _ ← takeVar var $ traverse_ \val →
-    modifyRef ref (_ <> val)
-  assertEqualRef "barfoo" ref
+    modifyRef ref (_ + 1)
+  waitForCallbacks 2 ref
 
 test_put_read_take ∷ TestEff Unit
 test_put_read_take = test "put/read/take" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   _ ← putVar "foo" var $ traverse_ \_ →
-    modifyRef ref (_ <> "bar")
+    modifyRef ref (_ + 1)
   _ ← readVar var $ traverse_ \val →
-    modifyRef ref (_ <> val <> "baz")
+    modifyRef ref (_ + 1)
   _ ← takeVar var $ traverse_ \val →
-    modifyRef ref (_ <> val)
-  assertEqualRef "foobazfoobar" ref
+    modifyRef ref (_ + 1)
+  waitForCallbacks 3 ref
 
 test_take_put ∷ TestEff Unit
 test_take_put = test "take/put" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   _ ← takeVar var $ traverse_ \val →
-    modifyRef ref (_ <> val)
+    modifyRef ref (_ + 1)
   _ ← putVar "foo" var $ traverse_ \_ →
-    modifyRef ref (_ <> "bar")
-  assertEqualRef "foobar" ref
+    modifyRef ref (_ + 1)
+  waitForCallbacks 2 ref
 
 test_take_read_put ∷ TestEff Unit
 test_take_read_put = test "take/read/put" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   _ ← takeVar var $ traverse_ \val →
-    modifyRef ref (_ <> val)
+    modifyRef ref (_ + 1)
   _ ← readVar var $ traverse_ \val →
-    modifyRef ref (_ <> val <> "baz")
+    modifyRef ref (_ + 1)
   _ ← putVar "foo" var $ traverse_ \_ →
-    modifyRef ref (_ <> "bar")
-  assertEqualRef "foobazfoobar" ref
+    modifyRef ref (_ + 1)
+  waitForCallbacks 3 ref
 
 test_read_put_take ∷ TestEff Unit
 test_read_put_take = test "read/put/take" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   _ ← readVar var $ traverse_ \val →
-    modifyRef ref (_ <> val <> "baz")
+    modifyRef ref (_ + 1)
   _ ← putVar "foo" var $ traverse_ \_ →
-    modifyRef ref (_ <> "bar")
+    modifyRef ref (_ + 1)
   _ ← takeVar var $ traverse_ \val → do
-    modifyRef ref (_ <> val)
-  assertEqualRef "foobazbarfoo" ref
+    modifyRef ref (_ + 1)
+  waitForCallbacks 3 ref
 
 test_read_take_put ∷ TestEff Unit
 test_read_take_put = test "read/take/put" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   _ ← readVar var $ traverse_ \val → do
-    modifyRef ref (_ <> val <> "baz")
+    modifyRef ref (_ + 1)
     void $ takeVar var $ traverse_ \val' →
-      modifyRef ref (_ <> val')
+      modifyRef ref (_ + 1)
   _ ← putVar "foo" var $ traverse_ \_ →
-    modifyRef ref (_ <> "bar")
-  assertEqualRef "foobazbarfoo" ref
+    modifyRef ref (_ + 1)
+  waitForCallbacks 3 ref
 
 test_kill_full ∷ TestEff Unit
 test_kill_full = test "kill/full" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   _ ← putVar "foo" var $ traverse_ \_ →
-    modifyRef ref (_ <> "bar")
+    modifyRef ref (_ + 1)
   killVar (error "Die.") var
   _ ← readVar var case _ of
-    Left err → modifyRef ref (_ <> message err)
-    Right _  → modifyRef ref (_ <> "BAD")
-  assertEqualRef "barDie." ref
+    Left err → modifyRef ref (_ + 1)
+    Right _  → modifyRef ref (_ + 2)
+  waitForCallbacks 2 ref
 
 test_kill_empty ∷ TestEff Unit
 test_kill_empty = test "kill/empty" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   killVar (error "Die.") var
   _ ← readVar var case _ of
-    Left err → modifyRef ref (_ <> message err)
-    Right _  → modifyRef ref (_ <> "BAD")
-  assertEqualRef "Die." ref
+    Left err → modifyRef ref (_ + 1)
+    Right _  → modifyRef ref (_ + 2)
+  waitForCallbacks 1 ref
 
 test_kill_pending ∷ TestEff Unit
 test_kill_pending = test "kill/pending" do
-  ref ← newRef ""
+  ref ← newRef 0
   var ← makeEmptyVar
   let
     cb s = case _ of
-      Left err → modifyRef ref (_ <> s <> message err)
-      Right _  → modifyRef ref (_ <> "BAD")
+      Left err → modifyRef ref (_ + 1)
+      Right _  → modifyRef ref (_ + 1)
   _ ← takeVar var (cb "a")
   _ ← takeVar var (cb "b")
   _ ← readVar var (cb "c")
   _ ← readVar var (cb "d")
   killVar (error "-die.") var
-  assertEqualRef "c-die.d-die.a-die.b-die." ref
+  waitForCallbacks 4 ref
 
 test_cancel ∷ TestEff Unit
 test_cancel = test "cancel" do
-  ref ← newRef ""
+  ref ← newRef 0
   v1 ← makeVar ""
-  c1 ← putVar "a" v1 $ traverse_ \_ → modifyRef ref (_ <> "a")
-  c2 ← putVar "b" v1 $ traverse_ \_ → modifyRef ref (_ <> "b")
-  c3 ← putVar "c" v1 $ traverse_ \_ → modifyRef ref (_ <> "c")
+  c1 ← putVar "a" v1 $ traverse_ \_ → modifyRef ref (_ + 1)
+  c2 ← putVar "b" v1 $ traverse_ \_ → modifyRef ref (_ + 1)
+  c3 ← putVar "c" v1 $ traverse_ \_ → modifyRef ref (_ + 1)
   c1
   c2
   _  ← tryTakeVar v1
   _  ← tryTakeVar v1
   _  ← tryTakeVar v1
   v2 ← makeEmptyVar
-  c4 ← takeVar v2 $ traverse_ \_ → modifyRef ref (_ <> "d")
-  c5 ← takeVar v2 $ traverse_ \_ → modifyRef ref (_ <> "e")
-  c6 ← takeVar v2 $ traverse_ \_ → modifyRef ref (_ <> "f")
+  c4 ← takeVar v2 $ traverse_ \_ → modifyRef ref (_ + 1)
+  c5 ← takeVar v2 $ traverse_ \_ → modifyRef ref (_ + 1)
+  c6 ← takeVar v2 $ traverse_ \_ → modifyRef ref (_ + 1)
   c5
   _  ← tryPutVar "a" v2
   _  ← tryPutVar "b" v2
   _  ← tryPutVar "c" v2
   v3 ← makeEmptyVar
-  c7 ← readVar v3 $ traverse_ \_ → modifyRef ref (_ <> "g")
-  c8 ← readVar v3 $ traverse_ \_ → modifyRef ref (_ <> "h")
-  c9 ← readVar v3 $ traverse_ \_ → modifyRef ref (_ <> "i")
+  c7 ← readVar v3 $ traverse_ \_ → modifyRef ref (_ + 1)
+  c8 ← readVar v3 $ traverse_ \_ → modifyRef ref (_ + 1)
+  c9 ← readVar v3 $ traverse_ \_ → modifyRef ref (_ + 1)
   c8
   c9
   _  ← tryPutVar "a" v3
-  assertEqualRef "cdfg" ref
+  waitForCallbacks 4 ref
 
 test_status_full ∷ TestEff Unit
 test_status_full = test "status/full" do
@@ -256,7 +273,7 @@ main = do
   test_take_put
   test_take_read_put
   test_read_put_take
-  -- test_read_take_put
+  test_read_take_put
   test_kill_full
   test_kill_empty
   test_kill_pending

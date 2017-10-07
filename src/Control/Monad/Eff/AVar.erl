@@ -19,14 +19,18 @@
 '_putVar'() ->
     fun(Util, Value, AVar, CB) ->
         fun() ->
-            gen_statem:call(AVar, {put, Util, Value, CB})
+            {UniqCB, Canceller} = unique_canceller(AVar, {Value, CB}),
+            gen_statem:cast(AVar, {put, Util, UniqCB}),
+            Canceller
         end
     end.
 
 '_readVar'() ->
     fun(Util, AVar, CB) ->
         fun() ->
-            gen_statem:call(AVar, {read, Util, CB})
+            {UniqCB, Canceller} = unique_canceller(AVar, CB),
+            gen_statem:cast(AVar, {read, Util, UniqCB}),
+            Canceller
         end
     end.
 
@@ -40,7 +44,9 @@
 '_takeVar'() ->
     fun(Util, AVar, CB) ->
         fun() ->
-            gen_statem:call(AVar, {take, Util, CB})
+            {UniqCB, Canceller} = unique_canceller(AVar, CB),
+            gen_statem:cast(AVar, {take, Util, UniqCB}),
+            Canceller
         end
     end.
 
@@ -110,9 +116,9 @@ handle_event({call, From},
              #{ reads := Reads, takes := Takes }
             ) ->
     ReadCBs = queue:to_list(Reads),
-    lists:foreach(fun({_UID, Read}) -> (Read(Left(Error)))() end, ReadCBs),
+    lists:foreach(fun({_UID, Read}) -> spawn(Read(Left(Error))) end, ReadCBs),
     TakeCBs = queue:to_list(Takes),
-    lists:foreach(fun({_UID, Take}) -> (Take(Left(Error)))() end, TakeCBs),
+    lists:foreach(fun({_UID, Take}) -> spawn(Take(Left(Error))) end, TakeCBs),
     {next_state, {killed, Error}, data, {reply, From, unit}};
 handle_event({call, From},
              {kill, #{ left := Left }, Error},
@@ -120,79 +126,72 @@ handle_event({call, From},
              #{ puts := Puts }
             ) ->
     PutCBs = queue:to_list(Puts),
-    lists:foreach(fun({_UID, {_, Put}}) -> (Put(Left(Error)))() end, PutCBs),
+    lists:foreach(fun({_UID, {_, Put}}) -> spawn(Put(Left(Error))) end, PutCBs),
     {next_state, {killed, Error}, data, {reply, From, unit}};
 handle_event({call, From}, {kill, _Util, _NewError}, {killed, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
 
-handle_event({call, From},
-             {put, #{ right := Right }, Value, CB},
+handle_event(cast,
+             {put, #{ right := Right }, {_PutUID, {Value, CB}}},
              empty,
              Data = #{ reads := Reads, takes := Takes }
             ) ->
     ReadCBs = queue:to_list(Reads),
-    lists:foreach(fun({_UID, Read}) -> (Read(Right(Value)))() end, ReadCBs),
+    lists:foreach(fun({_ReadUID, Read}) -> spawn(Read(Right(Value))) end, ReadCBs),
     case queue:out(Takes) of
-        {{value, {_UID, Take}}, NewTakes} ->
-            (Take(Right(Value)))(),
-            (CB(Right(unit)))(),
+        {{value, {_TakeUID, Take}}, NewTakes} ->
+            spawn(Take(Right(Value))),
+            spawn(CB(Right(unit))),
             NewData = maps:put(takes, NewTakes, Data),
-            {keep_state, NewData, {reply, From, unit_canceller()}};
+            {keep_state, NewData};
         {empty, Takes} ->
-            (CB(Right(unit)))(),
-            {next_state, {filled, Value}, filled_queues(), {reply, From, unit_canceller()}}
+            spawn(CB(Right(unit))),
+            {next_state, {filled, Value}, filled_queues()}
     end;
-handle_event({call, From},
-             {put, _Util, NewValue, CB},
-             {filled, _Value},
-             #{ puts := Puts }
-            ) ->
-    {UniqCB, Canceller} = unique_canceller({NewValue, CB}),
-    NewData = #{ puts => queue:in(UniqCB, Puts) },
-    {keep_state, NewData, {reply, From, Canceller}};
-handle_event({call, From},
-             {put, #{ left := Left }, _Value, CB},
+handle_event(cast, {put, _Util, CB}, {filled, _Value}, #{ puts := Puts }) ->
+    NewData = #{ puts => queue:in(CB, Puts) },
+    {keep_state, NewData};
+handle_event(cast,
+             {put, #{ left := Left }, {_UID, {_Value, CB}}},
              {killed, Error},
              _Data
             ) ->
-    (CB(Left(Error)))(),
-    {keep_state_and_data, {reply, From, unit_canceller()}};
+    spawn(CB(Left(Error))),
+    keep_state_and_data;
 
-handle_event({call, From}, {read, _Util, CB}, empty, Data = #{ reads := Reads }) ->
-    {UniqCB, Canceller} = unique_canceller(CB),
-    NewData = maps:put(reads, queue:in(UniqCB, Reads), Data),
-    {keep_state, NewData, {reply, From, Canceller}};
-handle_event({call, From}, {read, #{ right := Right }, CB}, {filled, Value}, _Data) ->
-    (CB(Right(Value)))(),
-    {next_state, empty, empty_queues(), {reply, From, unit_canceller()}};
-handle_event({call, From}, {read, #{ left := Left }, CB}, {killed, Error}, _Data) ->
-    (CB(Left(Error)))(),
-    {keep_state_and_data, {reply, From, unit_canceller()}};
+handle_event(cast, {read, _Util, CB}, empty, Data = #{ reads := Reads }) ->
+    NewData = maps:put(reads, queue:in(CB, Reads), Data),
+    {keep_state, NewData};
+handle_event(cast, {read, #{ right := Right }, {_UID, CB}}, {filled, Value}, _Data) ->
+    spawn(CB(Right(Value))),
+    {next_state, empty, empty_queues()};
+handle_event(cast, {read, #{ left := Left }, {_UID, CB}}, {killed, Error}, _Data) ->
+    spawn(CB(Left(Error))),
+    keep_state_and_data;
 
 handle_event({call, From}, {status, Util}, State, _Data) ->
     {keep_state_and_data, {reply, From, handle_status(Util, State)}};
 
-handle_event({call, From}, {take, _Util, CB}, empty, Data = #{ takes := Takes }) ->
-    {UniqCB, Canceller} = unique_canceller(CB),
-    NewData = maps:put(takes, queue:in(UniqCB, Takes), Data),
-    {keep_state, NewData, {reply, From, Canceller}};
-handle_event({call, From},
-             {take, #{ right := Right }, CB},
+handle_event(cast, {take, _Util, CB}, empty, Data = #{ takes := Takes }) ->
+    NewData = maps:put(takes, queue:in(CB, Takes), Data),
+    {keep_state, NewData};
+handle_event(cast,
+             {take, #{ right := Right }, {_TakeUID, CB}},
              {filled, Value},
              #{ puts := Puts }
             ) ->
-    (CB(Right(Value)))(),
+    spawn(CB(Right(Value))),
     case queue:out(Puts) of
         {{value, {_UID, {NewValue, Put}}}, NewPuts} ->
-            (Put(Right(NewValue)))(),
+            spawn(Put(Right(NewValue))),
             NewData = #{ puts => NewPuts },
-            {next_state, {filled, NewValue}, NewData, {reply, From, unit_canceller()}};
+            {next_state, {filled, NewValue}, NewData};
         {empty, Puts} ->
-            {next_state, empty, empty_queues(), {reply, From, unit_canceller()}}
+            {next_state, empty, empty_queues()}
     end;
-handle_event({call, From}, {take, #{ left := Left }, CB}, {killed, Error}, _Data) ->
-    (CB(Left(Error)))(),
-    {keep_state_and_data, {reply, From, unit_canceller()}};
+handle_event(cast, {take, #{ left := Left }, {_TakeUID, CB}}, {killed, Error}, _Data) ->
+    spawn(CB(Left(Error))),
+    keep_state_and_data;
 
 handle_event({call, From},
              {tryPut, #{ right := Right }, Value},
@@ -200,10 +199,10 @@ handle_event({call, From},
              #{ reads := Reads, takes := Takes }
             ) ->
     ReadCBs = queue:to_list(Reads),
-    lists:foreach(fun({_UID, Read}) -> (Read(Right(Value)))() end, ReadCBs),
+    lists:foreach(fun({_UID, Read}) -> spawn(Read(Right(Value))) end, ReadCBs),
     case queue:out(Takes) of
         {{value, {_UID, Take}}, NewTakes} ->
-            (Take(Right(Value)))(),
+            spawn(Take(Right(Value))),
             NewData = #{ reads => Reads, takes => NewTakes},
             {keep_state, NewData, {reply, From, true}};
         {empty, Takes} ->
@@ -222,7 +221,7 @@ handle_event({call, From},
             ) ->
     case queue:out(Puts) of
         {{value, {_UID, {NewValue, Put}}}, NewPuts} ->
-            (Put(Right(NewValue)))(),
+            spawn(Put(Right(NewValue))),
             NewData = #{ puts => NewPuts },
             {next_state, {filled, NewValue}, NewData, {reply, From, Just(Value)}};
         {empty, Puts} ->
@@ -240,13 +239,10 @@ handle_try_read(#{ nothing := Nothing }, _State) -> Nothing.
 
 %% Cancellers
 
-unique_canceller(CB) ->
-    Self = self(),
+unique_canceller(AVar, CB) ->
     UniqCB = {erlang:unique_integer(), CB},
-    Canceller = fun() -> gen_statem:call(Self, {cancel, UniqCB}) end,
+    Canceller = fun() -> gen_statem:call(AVar, {cancel, UniqCB}) end,
     {UniqCB, Canceller}.
-
-unit_canceller() -> fun() -> unit end.
 
 %% Helpers
 
