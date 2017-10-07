@@ -115,18 +115,15 @@ handle_event({call, From},
              empty,
              #{ reads := Reads, takes := Takes }
             ) ->
-    ReadCBs = queue:to_list(Reads),
-    lists:foreach(fun({_UID, Read}) -> spawn(Read(Left(Error))) end, ReadCBs),
-    TakeCBs = queue:to_list(Takes),
-    lists:foreach(fun({_UID, Take}) -> spawn(Take(Left(Error))) end, TakeCBs),
+    queue_foreach(fun({_UID, Read}) -> spawn(Read(Left(Error))) end, Reads),
+    queue_foreach(fun({_UID, Take}) -> spawn(Take(Left(Error))) end, Takes),
     {next_state, {killed, Error}, data, {reply, From, unit}};
 handle_event({call, From},
              {kill, #{ left := Left }, Error},
              {filled, _Value},
              #{ puts := Puts }
             ) ->
-    PutCBs = queue:to_list(Puts),
-    lists:foreach(fun({_UID, {_, Put}}) -> spawn(Put(Left(Error))) end, PutCBs),
+    queue_foreach(fun({_UID, {_, Put}}) -> spawn(Put(Left(Error))) end, Puts),
     {next_state, {killed, Error}, data, {reply, From, unit}};
 handle_event({call, From}, {kill, _Util, _NewError}, {killed, _Error}, _Data) ->
     {keep_state_and_data, {reply, From, unit}};
@@ -139,8 +136,7 @@ handle_event({call, From},
              empty,
              #{ reads := Reads, takes := Takes }
             ) ->
-    ReadCBs = queue:to_list(Reads),
-    lists:foreach(fun({_UID, Read}) -> spawn(Read(Right(Value))) end, ReadCBs),
+    queue_foreach(fun({_UID, Read}) -> spawn(Read(Right(Value))) end, Reads),
     case queue:out(Takes) of
         {{value, {_UID, Take}}, NewTakes} ->
             spawn(Take(Right(Value))),
@@ -176,8 +172,7 @@ handle_event(cast,
              empty,
              Data = #{ reads := Reads, takes := Takes }
             ) ->
-    ReadCBs = queue:to_list(Reads),
-    lists:foreach(fun({_ReadUID, Read}) -> spawn(Read(Right(Value))) end, ReadCBs),
+    queue_foreach(fun({_ReadUID, Read}) -> spawn(Read(Right(Value))) end, Reads),
     case queue:out(Takes) of
         {{value, {_TakeUID, Take}}, NewTakes} ->
             spawn(Take(Right(Value))),
@@ -249,3 +244,5 @@ unique_canceller(AVar, CB) ->
 empty_queues() -> #{ reads => queue:new(), takes => queue:new() }.
 
 filled_queues() -> #{ puts => queue:new() }.
+
+queue_foreach(F, Q) -> lists:foreach(F, queue:to_list(Q)).
